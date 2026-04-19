@@ -3,6 +3,7 @@ local SmartMovementAI = {}
 --// SERVICES
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
 --// CONFIG
 local MAX_JUMPS = 12
@@ -13,24 +14,21 @@ local NODE_SPACING = 30
 local GRID_RADIUS = 120
 local SAFE_RADIUS = 50
 
-local ENGAGE_DISTANCE = 18
-local RETREAT_DISTANCE = 10
-
 local SAFE_HP_THRESHOLD = 0.25
 
-local COSTS = {
-    walk = 3,
-    dash = 0.2,
-    jump = 25
-}
-
---// NODE STORAGE
+--// STATE
 local nodes = {}
 
---// REQUIRED INPUT FUNCTION
--- function fireKey(key, isDown) end
+--// INPUT SYSTEM (FIXED)
+local function fireKey(key, isDown)
+    if isDown == false then
+        VirtualInputManager:SendKeyEvent(false, key, false, game)
+    else
+        VirtualInputManager:SendKeyEvent(true, key, false, game)
+    end
+end
 
---// UTILS
+--// RAY
 local function ray(a, b)
     return workspace:Raycast(a, b - a)
 end
@@ -42,11 +40,6 @@ end
 local function needsJump(a, b)
     local hit = ray(a, b)
     return hit ~= nil or (b.Y - a.Y) > 4
-end
-
---// DASH CHECK (AIR ENABLED)
-local function canDash(a, b)
-    return (b - a).Magnitude <= DASH_DISTANCE and clearLine(a, b)
 end
 
 --// NODE GEN
@@ -70,7 +63,7 @@ local function generateNodes(center)
     end
 end
 
---// GRAPH CONNECT
+--// CONNECT GRAPH
 local function connectNodes()
     for _, a in ipairs(nodes) do
         for _, b in ipairs(nodes) do
@@ -114,7 +107,7 @@ local function closest(pos)
     return best
 end
 
---// SAFE POINT (within 50 studs)
+--// SAFE POINT (50 studs)
 local function getHighestNearby(origin)
     local best = origin
     local bestY = -math.huge
@@ -171,7 +164,6 @@ local function findPath(startNode, goalNode)
             local nj = cur.jumpsLeft
             local nt = cur.time
             local dr = cur.dashReady
-            local cost = COSTS[e.type]
 
             if e.type == "jump" then
                 if nj <= 0 then continue end
@@ -192,7 +184,7 @@ local function findPath(startNode, goalNode)
             end
 
             local nk = key(e.node, nj, dr)
-            local newCost = (g[ck] or math.huge) + cost
+            local newCost = (g[ck] or math.huge) + 1
 
             if not g[nk] or newCost < g[nk] then
                 g[nk] = newCost
@@ -216,17 +208,22 @@ local function findPath(startNode, goalNode)
     return nil
 end
 
---// CORE AI
-function SmartMovementAI.Start(character, fireKey, getEnemy)
+--// MAIN AI
+function SmartMovementAI.Start(character, targetGetter)
     local humanoid = character:WaitForChild("Humanoid")
     local root = character:WaitForChild("HumanoidRootPart")
 
     local tool = character:FindFirstChildOfClass("Tool")
 
     local lastDash = 0
+    local inSafeMode = false
+    local safeTarget = nil
+
+    -- HOLD W ALWAYS INITIALLY
+    fireKey("W", true)
 
     RunService.Heartbeat:Connect(function()
-        local enemy = getEnemy()
+        local enemy = targetGetter()
         if not enemy then return end
 
         local enemyRoot = enemy:FindFirstChild("HumanoidRootPart")
@@ -234,52 +231,58 @@ function SmartMovementAI.Start(character, fireKey, getEnemy)
 
         local hp = humanoid.Health / humanoid.MaxHealth
         local dist = (enemyRoot.Position - root.Position).Magnitude
+        local dirToEnemy = (enemyRoot.Position - root.Position)
 
-        --// SAFE MODE
+        if dirToEnemy.Magnitude > 0 then
+            dirToEnemy = dirToEnemy.Unit
+        end
+
+        --// SAFE MODE (WAIT UNTIL FULL HP)
         if hp < SAFE_HP_THRESHOLD then
-            local safe = getHighestNearby(root.Position)
-            local dir = (safe - root.Position).Unit
+            if not inSafeMode then
+                safeTarget = getHighestNearby(root.Position)
+                inSafeMode = true
+            end
 
-            fireKey("W", true)
+            local dir = (safeTarget - root.Position)
+            if dir.Magnitude > 0 then dir = dir.Unit end
+
             root.AssemblyLinearVelocity = dir * 50
+
+            if hp >= 1 then
+                inSafeMode = false
+                safeTarget = nil
+            end
+
             return
         end
 
-        --// COMBAT BEHAVIOR (ENGAGE / RETREAT LOOP)
+        inSafeMode = false
 
-        local dirToEnemy = (enemyRoot.Position - root.Position).Unit
+        --// COMBAT LOGIC
 
-        -- ENGAGE DASH IN
-        if dist > ENGAGE_DISTANCE and dist < 40 and tick() - lastDash > DASH_COOLDOWN then
-            fireKey("Q") -- dash in
+        -- DASH IN + ATTACK
+        if dist < 40 and dist > 12 and tick() - lastDash > DASH_COOLDOWN then
+            fireKey("Q", true)
             root.AssemblyLinearVelocity = dirToEnemy * 120
             lastDash = tick()
 
-            -- attack on impact
-            if tool then
-                tool:Activate()
-            end
+            if tool then tool:Activate() end
         end
 
-        -- MELEE PRESSURE
-        if dist < 12 then
-            fireKey("Space") -- jump pressure
-            if tool then
-                tool:Activate()
-            end
+        -- CLOSE RANGE PRESSURE
+        if dist < 10 then
+            fireKey("Space", true)
+            if tool then tool:Activate() end
         end
 
-        -- RETREAT DASH BACK
-        if dist < RETREAT_DISTANCE then
-            local back = -dirToEnemy
-            if tick() - lastDash > DASH_COOLDOWN then
-                fireKey("Q")
-                root.AssemblyLinearVelocity = back * 100
-                lastDash = tick()
-            end
+        -- RETREAT DASH
+        if dist < 8 then
+            fireKey("Q", true)
+            root.AssemblyLinearVelocity = (-dirToEnemy) * 100
         end
 
-        --// PATH SYSTEM (still used for movement logic)
+        --// PATH UPDATE
         generateNodes(root.Position)
         connectNodes()
 
@@ -292,7 +295,10 @@ function SmartMovementAI.Start(character, fireKey, getEnemy)
 
         local step = path[1]
         local moveDir = (step.node.position - root.Position)
-        if moveDir.Magnitude > 0 then moveDir = moveDir.Unit end
+
+        if moveDir.Magnitude > 0 then
+            moveDir = moveDir.Unit
+        end
 
         root.AssemblyLinearVelocity =
             Vector3.new(moveDir.X * 60, root.AssemblyLinearVelocity.Y, moveDir.Z * 60)
