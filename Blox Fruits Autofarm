@@ -1,1 +1,1 @@
-local pathfinding = loadstring(game:HttpGet(""))()
+local pathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.com/LizardRush/Roblox-Script-Bin/refs/heads/main/modules/Blox%20fruits/pathfinding.lua"))()
