@@ -104,7 +104,7 @@ function SmartMovementAI.Start(character, targetGetter)
         if dir.Magnitude > 0 then dir = dir.Unit end
 
         --// SAFE MODE
-        if Flags.UseSafeMode and hp < SAFE_HP_THRESHOLD then
+        if getgenv().SmartAI.BetaFlags.UseSafeMode and hp < SAFE_HP_THRESHOLD then
             if not inSafeMode then
                 generateNodes(root.Position)
                 safeTarget = getHighestNearby(root.Position)
@@ -157,7 +157,7 @@ function SmartMovementAI.Start(character, targetGetter)
         end
 
         --// PARKOUR (Q / SPACE)
-        if Flags.UseParkour then
+        if getgenv().SmartAI.BetaFlags.UseParkour then
             if dist > 10 and dist < 40 and tick() - lastDash > DASH_COOLDOWN then
                 fireKey("Q", true)
                 root.AssemblyLinearVelocity = dir * 120
@@ -170,12 +170,12 @@ function SmartMovementAI.Start(character, targetGetter)
         end
 
         --// ABILITIES (Z / X / C / V)
-        if Flags.UseAbilities and not retreating then
+        if getgenv().SmartAI.BetaFlags.UseAbilities and not retreating then
             -- Not implimented
         end
 
         --// PATHFINDING (optional assist)
-        if Flags.UsePathfinding then
+        if getgenv().SmartAI.BetaFlags.UsePathfinding then
             generateNodes(root.Position)
             local node = getClosestNode(enemyRoot.Position)
 
