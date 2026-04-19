@@ -1,29 +1,41 @@
-local pathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.com/LizardRush/Roblox-Script-Bin/refs/heads/main/modules/Blox%20fruits/pathfinding.lua"))()
-local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/7GrandDadPGN/VapeV4ForRoblox/main/NewMainScript.lua"))()
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
-local Window = UI:CreateWindow({
-    Name = "LRush AutoFarm",
-    Theme = "Dark"
+local Window = Rayfield:CreateWindow({
+    Name = "LRush's Autofarm",
+    LoadingTitle = "Loading...",
+    LoadingSubtitle = "by LRush",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "LRushHub",
+        FileName = "BloxFruits"
+    },
+    Discord = {
+        Enabled = true,
+        Invite = "aUd8umqUKu",
+        RememberJoins = true
+    },
+    KeySystem = false
 })
 
--- TABS (like MegaHack sidebar)
-local MainTab = Window:CreateTab("Main")
-local CombatTab = Window:CreateTab("Combat")
-local FarmTab = Window:CreateTab("Farm")
-local MiscTab = Window:CreateTab("Misc")
+-- TABS
+local MainTab = Window:CreateTab("Main", 4483362458)
+local CombatTab = Window:CreateTab("Combat", 4483362458)
+local FarmTab = Window:CreateTab("Farm", 4483362458)
+local MiscTab = Window:CreateTab("Misc", 4483362458)
 
--- SECTION: MAIN
+-- MAIN
 MainTab:CreateToggle({
     Name = "Auto Farm Level",
-    Default = false,
+    CurrentValue = _G.Settings.Main["Auto Farm Level"],
     Callback = function(v)
+        _G.Settings.Main["Auto Farm Level"] = v
         _G.AutoFarmLevelReal = v
     end
 })
 
 MainTab:CreateToggle({
     Name = "Fast Auto Farm",
-    Default = false,
+    CurrentValue = _G.Settings.Main["Fast Auto Farm Level"],
     Callback = function(v)
         _G.Settings.Main["Fast Auto Farm Level"] = v
     end
@@ -31,9 +43,9 @@ MainTab:CreateToggle({
 
 MainTab:CreateSlider({
     Name = "Mob Aura Distance",
-    Min = 0,
-    Max = 5000,
-    Default = 1000,
+    Range = {0, 5000},
+    Increment = 50,
+    CurrentValue = _G.Settings.Main["Distance Mob Aura"],
     Callback = function(v)
         _G.Settings.Main["Distance Mob Aura"] = v
     end
@@ -41,16 +53,16 @@ MainTab:CreateSlider({
 
 MainTab:CreateToggle({
     Name = "Mob Aura",
-    Default = false,
+    CurrentValue = _G.Settings.Main["Mob Aura"],
     Callback = function(v)
         _G.Settings.Main["Mob Aura"] = v
     end
 })
 
--- SECTION: COMBAT
+-- COMBAT
 CombatTab:CreateToggle({
     Name = "Fast Attack",
-    Default = true,
+    CurrentValue = _G.Settings.Configs["Fast Attack"],
     Callback = function(v)
         _G.Settings.Configs["Fast Attack"] = v
     end
@@ -59,6 +71,7 @@ CombatTab:CreateToggle({
 CombatTab:CreateDropdown({
     Name = "Attack Speed",
     Options = {"Fast","Normal","Slow"},
+    CurrentOption = _G.Settings.Configs["Fast Attack Type"],
     Callback = function(v)
         _G.Settings.Configs["Fast Attack Type"] = v
     end
@@ -66,16 +79,17 @@ CombatTab:CreateDropdown({
 
 CombatTab:CreateToggle({
     Name = "Auto Haki",
-    Default = true,
+    CurrentValue = _G.Settings.Configs["Auto Haki"],
     Callback = function(v)
         _G.Settings.Configs["Auto Haki"] = v
     end
 })
 
--- SECTION: FARM
+-- FARM
 FarmTab:CreateDropdown({
-    Name = "Weapon",
+    Name = "Select Weapon",
     Options = {"Melee","Sword","Fruit"},
+    CurrentOption = {"Melee"},
     Callback = function(v)
         _G.SelectWeaponType = v
     end
@@ -83,26 +97,26 @@ FarmTab:CreateDropdown({
 
 FarmTab:CreateSlider({
     Name = "Farm Distance",
-    Min = 1,
-    Max = 50,
-    Default = 20,
+    Range = {1, 50},
+    Increment = 1,
+    CurrentValue = _G.Settings.Configs["Distance Auto Farm"],
     Callback = function(v)
         _G.Settings.Configs["Distance Auto Farm"] = v
     end
 })
 
 FarmTab:CreateToggle({
-    Name = "Bring Mobs",
-    Default = true,
+    Name = "Bring Mob",
+    CurrentValue = _G.Settings.Configs["Bring Mob"],
     Callback = function(v)
         _G.Settings.Configs["Bring Mob"] = v
     end
 })
 
--- SECTION: MISC
+-- MISC
 MiscTab:CreateToggle({
     Name = "No Dash Cooldown",
-    Default = false,
+    CurrentValue = _G.Settings.Misc["No Dash Cooldown"],
     Callback = function(v)
         _G.Settings.Misc["No Dash Cooldown"] = v
     end
@@ -110,7 +124,7 @@ MiscTab:CreateToggle({
 
 MiscTab:CreateToggle({
     Name = "Infinite Energy",
-    Default = false,
+    CurrentValue = _G.Settings.Misc["Infinities Energy"],
     Callback = function(v)
         _G.Settings.Misc["Infinities Energy"] = v
     end
@@ -118,7 +132,7 @@ MiscTab:CreateToggle({
 
 MiscTab:CreateToggle({
     Name = "Auto Rejoin",
-    Default = true,
+    CurrentValue = _G.Settings.Misc["Auto Rejoin"],
     Callback = function(v)
         _G.Settings.Misc["Auto Rejoin"] = v
     end
