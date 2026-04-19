@@ -1,1 +1,125 @@
 local pathfinding = loadstring(game:HttpGet("https://raw.githubusercontent.com/LizardRush/Roblox-Script-Bin/refs/heads/main/modules/Blox%20fruits/pathfinding.lua"))()
+local UI = loadstring(game:HttpGet("https://raw.githubusercontent.com/7GrandDadPGN/VapeV4ForRoblox/main/NewMainScript.lua"))()
+
+local Window = UI:CreateWindow({
+    Name = "LizardRush Hub",
+    Theme = "Dark"
+})
+
+-- TABS (like MegaHack sidebar)
+local MainTab = Window:CreateTab("Main")
+local CombatTab = Window:CreateTab("Combat")
+local FarmTab = Window:CreateTab("Farm")
+local MiscTab = Window:CreateTab("Misc")
+
+-- SECTION: MAIN
+MainTab:CreateToggle({
+    Name = "Auto Farm Level",
+    Default = false,
+    Callback = function(v)
+        _G.AutoFarmLevelReal = v
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Fast Auto Farm",
+    Default = false,
+    Callback = function(v)
+        _G.Settings.Main["Fast Auto Farm Level"] = v
+    end
+})
+
+MainTab:CreateSlider({
+    Name = "Mob Aura Distance",
+    Min = 0,
+    Max = 5000,
+    Default = 1000,
+    Callback = function(v)
+        _G.Settings.Main["Distance Mob Aura"] = v
+    end
+})
+
+MainTab:CreateToggle({
+    Name = "Mob Aura",
+    Default = false,
+    Callback = function(v)
+        _G.Settings.Main["Mob Aura"] = v
+    end
+})
+
+-- SECTION: COMBAT
+CombatTab:CreateToggle({
+    Name = "Fast Attack",
+    Default = true,
+    Callback = function(v)
+        _G.Settings.Configs["Fast Attack"] = v
+    end
+})
+
+CombatTab:CreateDropdown({
+    Name = "Attack Speed",
+    Options = {"Fast","Normal","Slow"},
+    Callback = function(v)
+        _G.Settings.Configs["Fast Attack Type"] = v
+    end
+})
+
+CombatTab:CreateToggle({
+    Name = "Auto Haki",
+    Default = true,
+    Callback = function(v)
+        _G.Settings.Configs["Auto Haki"] = v
+    end
+})
+
+-- SECTION: FARM
+FarmTab:CreateDropdown({
+    Name = "Weapon",
+    Options = {"Melee","Sword","Fruit"},
+    Callback = function(v)
+        _G.SelectWeaponType = v
+    end
+})
+
+FarmTab:CreateSlider({
+    Name = "Farm Distance",
+    Min = 1,
+    Max = 50,
+    Default = 20,
+    Callback = function(v)
+        _G.Settings.Configs["Distance Auto Farm"] = v
+    end
+})
+
+FarmTab:CreateToggle({
+    Name = "Bring Mobs",
+    Default = true,
+    Callback = function(v)
+        _G.Settings.Configs["Bring Mob"] = v
+    end
+})
+
+-- SECTION: MISC
+MiscTab:CreateToggle({
+    Name = "No Dash Cooldown",
+    Default = false,
+    Callback = function(v)
+        _G.Settings.Misc["No Dash Cooldown"] = v
+    end
+})
+
+MiscTab:CreateToggle({
+    Name = "Infinite Energy",
+    Default = false,
+    Callback = function(v)
+        _G.Settings.Misc["Infinities Energy"] = v
+    end
+})
+
+MiscTab:CreateToggle({
+    Name = "Auto Rejoin",
+    Default = true,
+    Callback = function(v)
+        _G.Settings.Misc["Auto Rejoin"] = v
+    end
+})
