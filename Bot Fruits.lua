@@ -1,666 +1,560 @@
-
---[[
-    Blox Fruits Exploit + Discord Bot Controller
-    Based on open source BF script patterns (Redz, Hoho, etc.)
-    Prefix: !
-    Compatible with: Synapse X, KRNL, Fluxus, Delta, Solara, Xeno
-]]
-
--- Executor API Detection
-local http_request = syn and syn.request or http and http.request or request or fluxus and fluxus.request
-local WebSocket = syn and syn.websocket or WebSocket or getgenv().WebSocket
-local queue_on_teleport = syn and syn.queue_on_teleport or queue_on_teleport or function() end
-
--- Services
+-- Imports
+local RS = game:GetService("ReplicatedStorage")
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TextChatService = game:GetService("TextChatService")
+local textChannels = TextChatService:WaitForChild("TextChannels")
+local TS = game:GetService("TweenService")
+local general = textChannels:WaitForChild("RBXGeneral")
 local VirtualUser = game:GetService("VirtualUser")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local Workspace = game:GetService("Workspace")
-local HttpService = game:GetService("HttpService")
+local workspace = game:GetService("Workspace") -- Cached workspace
+local HttpService = game:GetService("HttpService") -- Added HttpService for webhooks
 
--- Game References (Standard BF Structure)
-local CommF_ = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("CommF_")
-local Player = Players.LocalPlayer
-local Character = Player.Character or Player.CharacterAdded:Wait()
-local Humanoid = Character:WaitForChild("Humanoid")
-local HRP = Character:WaitForChild("HumanoidRootPart")
+-- |
+-- | --- Command System
+local function compileCommands(commands)
+    local compiled = {}
 
--- CONFIG
-local CONFIG = {
-    DiscordBotToken = "YOUR_BOT_TOKEN",      -- Bot token
-    DiscordChannelId = "YOUR_CHANNEL_ID",    -- Channel ID
-    Prefix = "!",                              -- Changed from / to !
-    TargetLevel = 50,
-    FarmSpeed = 350,
-    AttackCooldown = 0.15,
-    QuestRetryDelay = 1,
-    FruitRollCost = 300000,                    -- 300k per roll
-    WebhookUrl = nil                           -- Optional webhook
-}
+    for _, command in ipairs(commands) do
+        local variables = {}
 
--- State
-local State = {
-    Running = false,
-    Mode = "LEVEL",       -- LEVEL, FRUIT_CHEST, IDLE
-    CurrentQuest = nil,
-    CurrentEnemy = nil,
-    Inventory = {},
-    Stats = {
-        StartTime = os.time(),
-        Kills = 0,
-        Chests = 0,
-        FruitsRolled = 0
+        -- Collect variable names
+        for name in command.template:gmatch("{(.-)}") do
+            table.insert(variables, name)
+        end
+
+        -- Escape Lua pattern characters
+        local pattern = command.template:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1")
+
+        -- Replace variables with capture groups
+        pattern = "^" .. pattern:gsub("{.-}", "(.+)") .. "$"
+
+        table.insert(compiled, {
+            pattern = pattern,
+            variables = variables,
+            callback = command.callback,
+            template = command.template,
+        })
+    end
+
+    return compiled
+end
+
+local function unequip()
+	local character = Players.LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+	if humanoid then
+		humanoid:UnequipTools()
+	end
+end
+
+local function searchInventory(query)
+	query = query:lower()
+
+	local player = Players.LocalPlayer
+	local character = player.Character
+	local backpack = player:FindFirstChild("Backpack")
+
+	if character then
+		for _, tool in ipairs(character:GetChildren()) do
+			if tool:IsA("Tool") and tool.Name:lower():find(query, 1, true) then
+				return tool
+			end
+		end
+	end
+
+	if backpack then
+		for _, tool in ipairs(backpack:GetChildren()) do
+			if tool:IsA("Tool") and tool.Name:lower():find(query, 1, true) then
+				return tool
+			end
+		end
+	end
+
+	return nil
+end
+
+local function tween(cf, speed)
+    local character = Players.LocalPlayer.Character
+    if not character or not character.PrimaryPart then return false end
+    
+    local primaryPart = character.PrimaryPart
+    primaryPart.Anchored = true
+    
+    local vectorPosition = cf.Position
+    local distance = (primaryPart.Position - vectorPosition).magnitude
+    local time = distance / speed
+    
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear)
+    local tweenObject = TS:Create(primaryPart, tweenInfo, {CFrame = cf})
+    tweenObject:Play()
+    
+    tweenObject.Completed:Wait()
+    primaryPart.Anchored = false
+    
+    return true
+end
+
+local function searchPlayers(query)
+	query = query:lower()
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Name:lower():find(query, 1, true) then
+            return player
+        end
+    end
+
+	return nil
+end
+
+local function facePart(part)
+	local player = Players.LocalPlayer
+	local char = player.Character
+
+	if not char or not char:FindFirstChild("HumanoidRootPart") then
+		return
+	end
+
+	local root = char.HumanoidRootPart
+
+	root.CFrame = CFrame.lookAt(
+		root.Position,
+		part.Position
+	)
+end
+
+local function drop(tool)
+	if not tool or not tool:IsA("Tool") then
+		return false
+	end
+
+	local player = Players.LocalPlayer
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+	if not character or not humanoid then
+		return false
+	end
+
+	if tool.Parent ~= character then
+		humanoid:EquipTool(tool)
+		task.wait()
+	end
+
+	tool.Parent = workspace
+
+	return true
+end
+
+-- Variables
+local speed = 300
+local collecting = false
+local enabled = true
+local disableOverride = false
+
+local commands = {
+    {
+        template = "give {user} a {fruit}",
+        callback = function(args)
+            local player = searchPlayers(args.user)
+            local fruit = searchInventory(args.fruit)
+            
+            if player and player.Character and player.Character.PrimaryPart then
+                local char = player.Character
+                local pos = char.PrimaryPart.CFrame * CFrame.new(0, 0, -3.5)
+                
+                if fruit then
+                    general:Chat("i gotchu")
+                    disableOverride = true
+                    if tween(pos, speed) then
+                        drop(fruit)
+                        disableOverride = false
+                    end
+                else
+                    general:Chat("i don't gotchu")
+                end
+            else
+                general:Chat("Player or character not found.")
+            end
+        end,
     },
-    WebSocket = nil
+    { -- New command: send inv
+        template = "send inv",
+        callback = function()
+            local player = Players.LocalPlayer
+            local inventory = {}
+
+            -- Check character for tools
+            if player.Character then
+                for _, child in ipairs(player.Character:GetChildren()) do
+                    if child:IsA("Tool") then
+                        table.insert(inventory, child.Name)
+                    end
+                end
+            end
+
+            -- Check backpack for tools
+            if player.Backpack then
+                for _, child in ipairs(player.Backpack:GetChildren()) do
+                    if child:IsA("Tool") then
+                        table.insert(inventory, child.Name)
+                    end
+                end
+            end
+
+            local inventoryMessage
+            if #inventory > 0 then
+                inventoryMessage = player.Name .. "'s Inventory:\n- " .. table.concat(inventory, "\n- ")
+            else
+                inventoryMessage = player.Name .. " has no tools in their inventory."
+            end
+
+            -- Send to all active webhooks
+            if Webhooks.Hook1Allowed and Webhooks.Hook1 ~= "" then
+                sendDiscordWebhook(Webhooks.Hook1, inventoryMessage)
+            end
+            if Webhooks.Hook2Allowed and Webhooks.Hook2 ~= "" then
+                sendDiscordWebhook(Webhooks.Hook2, inventoryMessage)
+            end
+            if Webhooks.Hook3Allowed and Webhooks.Hook3 ~= "" then
+                sendDiscordWebhook(Webhooks.Hook3, inventoryMessage)
+            end
+            if Webhooks.Hook4Allowed and Webhooks.Hook4 ~= "" then
+                sendDiscordWebhook(Webhooks.Hook4, inventoryMessage)
+            end
+            
+            general:Chat("Inventory sent to active webhooks!")
+        end,
+    },
 }
 
--- Utility Functions
-local function notify(title, text)
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = title,
-        Text = text,
-        Duration = 3
+local compiled = compileCommands(commands)
+
+-- Window
+local Window = Library:CreateWindow({
+	Title = "Vyrn Fruit Bot",
+	Footer = "version: idk mate why do you look here",
+    Center = true,
+	NotifySide = "Right",
+	ShowCustomCursor = true,
+    AutoShow = true,
+    Resizable = false,
+})
+
+local Tabs = {
+    Collection = Window:AddTab("Collection", "settings"),
+    Webhook = Window:AddTab("Webhooks", "settings"),
+    Chat = Window:AddTab("Chat Commands", "settings"),
+}
+
+local Boxes = {
+    Webhook = {
+        Hook1 = Tabs.Webhook:AddLeftGroupbox("Webhook 1", "wrench"),
+        Hook2 = Tabs.Webhook:AddRightGroupbox("Webhook 2", "wrench"),
+        Hook3 = Tabs.Webhook:AddLeftGroupbox("Webhook 3", "wrench"),
+        Hook4 = Tabs.Webhook:AddRightGroupbox("Webhook 4", "wrench"),
+    },
+    Settings = {
+        Speed = Tabs.Collection:AddLeftGroupbox("Settings", "wrench"),
+    },
+    RarityFilters = Tabs.Collection:AddRightGroupbox("Fruit Rarity Filters", "filter") -- New Rarity Filters Groupbox
+}
+
+local Webhooks = {
+    Hook1 = "",
+    Hook1Allowed = false,
+    Hook2 = "",
+    Hook2Allowed = false,
+    Hook3 = "",
+    Hook3Allowed = false,
+    Hook4 = "",
+    Hook4Allowed = false,
+}
+
+local Toggles = {
+    WebhookAllow1 = Boxes.Webhook.Hook1:AddToggle("Allow Sending", {Text = "Allow Sending",Default = false,}),
+    WebhookAllow2 = Boxes.Webhook.Hook2:AddToggle("Allow Sending", {Text = "Allow Sending",Default = false,}),
+    WebhookAllow3 = Boxes.Webhook.Hook3:AddToggle("Allow Sending", {Text = "Allow Sending",Default = false,}),
+    WebhookAllow4 = Boxes.Webhook.Hook4:AddToggle("Allow Sending", {Text = "Allow Sending",Default = false,}),
+
+    -- New Rarity Filter Toggles
+}
+
+local SpeedSlider = Boxes.Settings.Speed:AddSlider("Speed", {
+    Text = "Speed",
+    Default = speed,
+    Min = 0,
+    Max = 350,
+    Rounding = 0,
+})
+
+-- UI Init
+Boxes.Webhook.Hook1:AddInput("Webhook URL", {
+    Callback = function(Value)
+		Webhooks.Hook1 = Value
+	end,
+})
+Boxes.Webhook.Hook2:AddInput("Webhook URL", {
+    Callback = function(Value)
+		Webhooks.Hook2 = Value
+	end,
+})
+Boxes.Webhook.Hook3:AddInput("Webhook URL", {
+    Callback = function(Value)
+		Webhooks.Hook3 = Value
+	end,
+})
+Boxes.Webhook.Hook4:AddInput("Webhook URL", {
+    Callback = function(Value)
+		Webhooks.Hook4 = Value
+	end,
+})
+
+-- Callbacks
+Toggles.WebhookAllow1:OnChanged(function(state)
+    Webhooks.Hook1Allowed = state
+end)
+Toggles.WebhookAllow2:OnChanged(function(state)
+    Webhooks.Hook2Allowed = state
+end)
+Toggles.WebhookAllow3:OnChanged(function(state)
+    Webhooks.Hook3Allowed = state
+end)
+Toggles.WebhookAllow4:OnChanged(function(state)
+    Webhooks.Hook4Allowed = state
+end)
+
+-- Rarity Filter Callbacks
+
+SpeedSlider:OnChanged(function(value)
+    speed = value
+end)
+
+-- Functions
+local function findCommand(input)
+    for _, command in ipairs(compiled) do
+        local captures = {input:match(command.pattern)}
+
+        if #captures > 0 then
+            local args = {}
+
+            for i, variable in ipairs(command.variables) do
+                args[variable] = captures[i]
+            end
+
+            command.callback(args)
+
+            return true
+        end
+    end
+
+    return false
+end
+
+local function FindBasePart(item)
+    if not item then
+        return nil
+    end
+
+    if item:IsA("BasePart") then
+        return item
+    end
+
+    return item:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function sendDiscordWebhook(url, message)
+    if not url or url == "" then return end
+
+    local data = HttpService:JSONEncode({
+        content = message,
     })
-end
 
-local function sendDiscord(content, embed)
-    if CONFIG.WebhookUrl then
-        local data = {content = content, embeds = embed and {embed} or nil}
-        pcall(function()
-            http_request({
-                Url = CONFIG.WebhookUrl,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode(data)
-            })
-        end)
-    end
-    
-    -- Also send via bot if token available
-    if not CONFIG.DiscordBotToken:find("YOUR_") then
-        local data = {content = content, embeds = embed and {embed} or nil}
-        pcall(function()
-            http_request({
-                Url = "https://discord.com/api/v10/channels/" .. CONFIG.DiscordChannelId .. "/messages",
-                Method = "POST",
-                Headers = {
-                    ["Content-Type"] = "application/json",
-                    ["Authorization"] = "Bot " .. CONFIG.DiscordBotToken
-                },
-                Body = HttpService:JSONEncode(data)
-            })
-        end)
-    end
-end
-
--- Game Functions (Based on open source BF scripts)
-local function getLevel()
-    return Player.Data.Level.Value
-end
-
-local function getMoney()
-    return Player.Data.Beli.Value
-end
-
-local function getFragments()
-    return Player.Data.Fragments.Value
-end
-
-local function getCurrentSea()
-    -- Detect current sea based on level or location
-    local level = getLevel()
-    if level < 700 then return 1 end
-    if level < 1500 then return 2 end
-    return 3
-end
-
-local function getQuestData()
-    -- Standard BF quest check
-    local success, result = pcall(function()
-        return CommF_:InvokeServer("GetQuests")
-    end)
-    if success then return result end
-    return nil
-end
-
-local function checkQuest()
-    -- Check if quest is active and valid
-    local questData = getQuestData()
-    if questData then
-        for _, quest in pairs(questData) do
-            if quest.Active then
-                return quest
-            end
-        end
-    end
-    return nil
-end
-
-local function getEnemyForQuest(questName)
-    -- Find enemy matching quest in Enemies folder
-    for _, enemy in pairs(Workspace.Enemies:GetChildren()) do
-        if enemy:FindFirstChild("Humanoid") and enemy.Humanoid.Health > 0 then
-            -- Match enemy name to quest target
-            if questName:find(enemy.Name) or enemy.Name:find(questName) then
-                return enemy
-            end
-        end
-    end
-    return nil
-end
-
-local function getAnyEnemy()
-    -- Get nearest enemy for farming
-    local nearest, dist = nil, math.huge
-    for _, enemy in pairs(Workspace.Enemies:GetChildren()) do
-        if enemy:FindFirstChild("Humanoid") and enemy.Humanoid.Health > 0 
-           and enemy:FindFirstChild("HumanoidRootPart") then
-            local d = (enemy.HumanoidRootPart.Position - HRP.Position).Magnitude
-            if d < dist then
-                dist = d
-                nearest = enemy
-            end
-        end
-    end
-    return nearest
-end
-
-local function acceptQuestForLevel()
-    -- Auto accept quest based on level (simplified)
-    local level = getLevel()
-    local questNPC = nil
-    
-    -- Determine quest NPC based on level ranges (simplified logic)
-    if level < 10 then questNPC = "BanditQuest1"
-    elseif level < 20 then questNPC = "BanditQuest2"
-    elseif level < 30 then questNPC = "MonkeyQuest1"
-    elseif level < 40 then questNPC = "GorillaQuest1"
-    elseif level < 50 then questNPC = "PirateQuest1"
-    else questNPC = "DesertQuest1"
-    end
-    
     pcall(function()
-        CommF_:InvokeServer("StartQuest", questNPC, 1)
+        game:HttpGet(url, true, "POST", data)
     end)
-    
-    task.wait(0.5)
-    return checkQuest()
 end
 
-local function bringMob(enemy)
-    -- Open source "bring mob" technique
-    if enemy and enemy:FindFirstChild("HumanoidRootPart") then
-        local targetPos = HRP.Position + Vector3.new(0, 0, 5)
-        enemy.HumanoidRootPart.CFrame = CFrame.new(targetPos)
-        enemy.HumanoidRootPart.Anchored = true
-        task.wait(0.1)
-        enemy.HumanoidRootPart.Anchored = false
-    end
-end
-
-local function attack()
-    -- Fast attack method from open source scripts
-    VirtualUser:CaptureController()
-    VirtualUser:Button1Down(Vector2.new(1280, 672))
-    task.wait(CONFIG.AttackCooldown)
-    VirtualUser:Button1Up(Vector2.new(1280, 672))
-end
-
-local function tweenTo(pos, speed)
-    local distance = (pos - HRP.Position).Magnitude
-    local time = distance / (speed or CONFIG.FarmSpeed)
-    local tween = TweenService:Create(HRP, TweenInfo.new(time, Enum.EasingStyle.Linear), {
-        CFrame = CFrame.new(pos)
-    })
-    tween:Play()
-    tween.Completed:Wait()
-end
-
--- Auto Farm Logic (Based on open source patterns)
-local function farmLevel()
-    while State.Running and State.Mode == "LEVEL" and getLevel() < CONFIG.TargetLevel do
-        -- Check/accept quest
-        local quest = checkQuest()
-        if not quest then
-            quest = acceptQuestForLevel()
-            task.wait(CONFIG.QuestRetryDelay)
-        end
-        
-        -- Find target enemy
-        local enemy = nil
-        if quest then
-            enemy = getEnemyForQuest(quest.Name or quest.Target)
-        end
-        
-        -- Fallback to any enemy
-        if not enemy then
-            enemy = getAnyEnemy()
-        end
-        
-        if enemy and enemy:FindFirstChild("HumanoidRootPart") then
-            State.CurrentEnemy = enemy
-            
-            -- Tween to enemy
-            tweenTo(enemy.HumanoidRootPart.Position + Vector3.new(0, 5, 0))
-            
-            -- Attack loop
-            while enemy.Humanoid and enemy.Humanoid.Health > 0 
-                  and State.Running and State.Mode == "LEVEL" do
-                -- Bring mob to player (anti-knockback)
-                bringMob(enemy)
-                
-                -- Position above enemy
-                HRP.CFrame = enemy.HumanoidRootPart.CFrame * CFrame.new(0, 5, 0)
-                
-                -- Attack
-                attack()
-                
-                task.wait()
-            end
-            
-            State.Stats.Kills = State.Stats.Kills + 1
-            
-            -- Progress update every 5 kills
-            if State.Stats.Kills % 5 == 0 then
-                sendDiscord(string.format("Level: %d/%d | Kills: %d | Beli: %d",
-                    getLevel(), CONFIG.TargetLevel, State.Stats.Kills, getMoney()))
-            end
-        else
-            -- No enemy found, wait
-            task.wait(1)
-        end
-    end
-    
-    -- Switch to fruit/chest mode
-    if getLevel() >= CONFIG.TargetLevel then
-        State.Mode = "FRUIT_CHEST"
-        sendDiscord("**Target Reached!** Level 50 achieved! Switching to fruit rolling + chest farming mode.")
-    end
-end
-
--- Chest Farm
-local function getNearestChest()
-    local nearest, dist = nil, math.huge
-    for _, obj in pairs(Workspace:GetChildren()) do
-        if obj.Name:find("Chest") and obj:FindFirstChild("TouchInterest") then
-            local d = (obj.Position - HRP.Position).Magnitude
-            if d < dist then
-                dist = d
-                nearest = obj
+-- New function to determine fruit rarity
+local function getFruitRarity(fruitObject)
+    -- Check for a StringValue named "Rarity" inside the fruit object
+    local rarityValue = fruitObject:FindFirstChild("Rarity")
+    if rarityValue and rarityValue:IsA("StringValue") then
+        local rarityString = rarityValue.Value
+        -- Normalize the rarity string to match our categories
+        local knownRarities = {"Common", "Uncommon", "Rare", "Legendary", "Mythic"}
+        for _, knownRarity in ipairs(knownRarities) do
+            if rarityString == knownRarity then
+                return rarityString
             end
         end
     end
-    return nearest
+    -- If no "Rarity" StringValue or it's not a known rarity, default to "Unknown"
+    return "Unknown"
 end
 
-local function farmChest()
-    local chest = getNearestChest()
-    if chest then
-        tweenTo(chest.Position, 500)
-        firetouchinterest(HRP, chest, 0)
-        firetouchinterest(HRP, chest, 1)
-        State.Stats.Chests = State.Stats.Chests + 1
-        return true
+local function CollectItem(item)
+    if not item then return false end
+    
+    local playerChar = Players.LocalPlayer.Character
+    if not playerChar or not playerChar:FindFirstChild("HumanoidRootPart") then return false end
+
+    local collected = false
+
+    if item:IsA("Tool") then
+        local handle = item:FindFirstChild("Handle")
+        if handle then
+            handle.CFrame = playerChar.HumanoidRootPart.CFrame
+            task.wait(0.1)
+            if not item:IsDescendantOf(workspace) then
+                collected = true
+            end
+        end
+    elseif item:IsA("Model") and (item.Name:lower():find("fruit", 1, true)) then -- Changed to use find for "fruit"
+        local basePart = FindBasePart(item)
+        if basePart then
+            if tween(CFrame.new(basePart.Position + Vector3.new(0, 3, 0)), speed) then
+                task.wait(0.1) -- Give time for collection to register
+                if not item:IsDescendantOf(workspace) then
+                    collected = true
+                end
+            end
+        end
     end
-    return false
+
+    if collected then
+        -- Send webhooks if enabled
+        local fruitName = item.Name
+        local collectionMessage = Players.LocalPlayer.Name .. " collected a " .. fruitName .. "!"
+        if Webhooks.Hook1Allowed and Webhooks.Hook1 ~= "" then
+            sendDiscordWebhook(Webhooks.Hook1, collectionMessage)
+        end
+        if Webhooks.Hook2Allowed and Webhooks.Hook2 ~= "" then
+            sendDiscordWebhook(Webhooks.Hook2, collectionMessage)
+        end
+        if Webhooks.Hook3Allowed and Webhooks.Hook3 ~= "" then
+            sendDiscordWebhook(Webhooks.Hook3, collectionMessage)
+        end
+        if Webhooks.Hook4Allowed and Webhooks.Hook4 ~= "" then
+            sendDiscordWebhook(Webhooks.Hook4, collectionMessage)
+        end
+    end
+
+    return collected
 end
 
--- Fruit Rolling
-local function rollFruit()
-    if getMoney() < CONFIG.FruitRollCost then return false end
-    
-    -- Teleport to fruit dealer (simplified - adjust for your sea)
-    local dealer = Workspace:FindFirstChild("FruitDealer") 
-                  or Workspace:FindFirstChild("AdvancedFruitDealer")
-    
-    if dealer then
-        tweenTo(dealer.Position + Vector3.new(0, 5, 0), 500)
-        task.wait(0.5)
-        
-        -- Invoke roll
-        pcall(function()
-            CommF_:InvokeServer("GetFruits")
-            CommF_:InvokeServer("PurchaseRawFruit", "Random")
+local function listenToChat(callback)
+    Players.PlayerAdded:Connect(function(player)
+        player.Chatted:Connect(function(message)
+            callback({
+                username = player.Name,
+                displayName = player.DisplayName,
+                message = message,
+                player = player,
+            })
         end)
-        
-        State.Stats.FruitsRolled = State.Stats.FruitsRolled + 1
-        return true
-    end
-    return false
-end
+    end)
 
-local function fruitAndChestLoop()
-    while State.Running and State.Mode == "FRUIT_CHEST" do
-        -- Roll fruit if we have money
-        if getMoney() >= CONFIG.FruitRollCost then
-            rollFruit()
-            sendDiscord(string.format("Rolled fruit! Money: %d | Fruits rolled: %d", 
-                getMoney(), State.Stats.FruitsRolled))
-            task.wait(3)
-        end
-        
-        -- Farm chests
-        farmChest()
-        task.wait(0.1)
-    end
-end
-
--- Inventory System
-local function scanInventory()
-    local fruits = {}
-    
-    -- Check backpack
-    for _, tool in pairs(Player.Backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            if tool:FindFirstChild("Fruit") or 
-               tool.Name:find("Fruit") or
-               tool.Name:find("Blox") then
-                table.insert(fruits, {
-                    name = tool.Name,
-                    location = "Backpack"
-                })
-            end
-        end
-    end
-    
-    -- Check character
-    for _, tool in pairs(Character:GetChildren()) do
-        if tool:IsA("Tool") then
-            if tool:FindFirstChild("Fruit") or 
-               tool.Name:find("Fruit") or
-               tool.Name:find("Blox") then
-                table.insert(fruits, {
-                    name = tool.Name,
-                    location = "Equipped"
-                })
-            end
-        end
-    end
-    
-    State.Inventory = fruits
-    return fruits
-end
-
--- Give Function
-local function giveFruit(fruitName, amount, targetUsername)
-    -- Find target player
-    local target = Players:FindFirstChild(targetUsername)
-    if not target then
-        return "who?"
-    end
-    
-    -- Find fruit in inventory
-    local fruitTool = nil
-    for _, tool in pairs(Player.Backpack:GetChildren()) do
-        if tool:IsA("Tool") and tool.Name:lower():find(fruitName:lower()) then
-            fruitTool = tool
-            break
-        end
-    end
-    
-    if not fruitTool then
-        return "Fruit '" .. fruitName .. "' not found in inventory!"
-    end
-    
-    -- Drop fruit near player
-    local targetChar = target.Character
-    if targetChar and targetChar:FindFirstChild("HumanoidRootPart") then
-        -- Teleport to target
-        tweenTo(targetChar.HumanoidRootPart.Position + Vector3.new(0, 3, 0), 500)
-        
-        -- Attempt drop (method varies by game version)
-        pcall(function()
-            -- Try to drop using remote
-            CommF_:InvokeServer("DropFruit", fruitTool.Name)
+    for _, player in ipairs(Players:GetPlayers()) do
+        player.Chatted:Connect(function(message)
+            callback({
+                username = player.Name,
+                displayName = player.DisplayName,
+                message = message,
+                player = player,
+            })
         end)
-        
-        -- Also try physical drop
-        fruitTool.Parent = Workspace
-        fruitTool.Handle.CFrame = targetChar.HumanoidRootPart.CFrame
-        
-        return string.format("Dropped %s x%d near %s!", fruitName, amount, targetUsername)
     end
-    
-    return "Target not spawned!"
+end
+-- Init
+local function chatCallback(args)
+    local command = args.message
+    command = command:gsub(" me ", " " ..args.username.. " ")
+    findCommand(command)
 end
 
--- Discord Commands (Now using ! prefix)
-local Commands = {
-    ["start"] = function(args, user)
-        if State.Running then
-            return "Already running! Current mode: " .. State.Mode
-        end
+local function StartFruits()
+    while task.wait(0.1) do
+        RS.Remotes.CommF_:InvokeServer("Cousin", "Buy")
         
-        State.Running = true
-        State.Mode = "LEVEL"
-        State.Stats.StartTime = os.time()
-        
-        task.spawn(farmLevel)
-        
-        return string.format("**Farming Started!**\nTarget: Level %d\nCurrent: Level %d\nMode: Level Farming", 
-            CONFIG.TargetLevel, getLevel())
-    end,
-    
-    ["stop"] = function(args, user)
-        State.Running = false
-        State.Mode = "IDLE"
-        return "**Farming Stopped!**\nSession Stats:\nKills: " .. State.Stats.Kills .. 
-               "\nChests: " .. State.Stats.Chests .. 
-               "\nFruits Rolled: " .. State.Stats.FruitsRolled
-    end,
-    
-    ["inventory"] = function(args, user)
-        local fruits = scanInventory()
-        if #fruits == 0 then
-            return "**Inventory Empty!**\nNo fruits found in backpack."
-        end
-        
-        local list = ""
-        for i, fruit in ipairs(fruits) do
-            list = list .. string.format("%d. %s (%s)\n", i, fruit.name, fruit.location)
-        end
-        
-        return string.format("**Fruit Inventory (%d items):**\n```\n%s```", #fruits, list)
-    end,
-    
-    ["give"] = function(args, user)
-        if #args < 3 then
-            return "Usage: `!give [fruit] [amount] [username]`"
-        end
-        
-        local fruitName = args[1]
-        local amount = tonumber(args[2]) or 1
-        local targetName = args[3]
-        
-        return giveFruit(fruitName, amount, targetName)
-    end,
-    
-    ["status"] = function(args, user)
-        local sessionTime = math.floor((os.time() - State.Stats.StartTime) / 60)
-        return string.format(
-            "**Status Report**\n```\nLevel: %d/%d\nMoney: %d\nFragments: %d\nMode: %s\nRunning: %s\nSession Time: %dm\n\nStats:\nKills: %d\nChests: %d\nFruits Rolled: %d\n```",
-            getLevel(), CONFIG.TargetLevel, getMoney(), getFragments(),
-            State.Mode, tostring(State.Running), sessionTime,
-            State.Stats.Kills, State.Stats.Chests, State.Stats.FruitsRolled
-        )
-    end,
-    
-    ["roll"] = function(args, user)
-        if rollFruit() then
-            return "Rolled a fruit! Check inventory."
-        else
-            return "Not enough money! Need " .. CONFIG.FruitRollCost .. " beli."
-        end
-    end,
-    
-    ["chest"] = function(args, user)
-        if farmChest() then
-            return "Farmed a chest! Total: " .. State.Stats.Chests
-        else
-            return "No chests found nearby."
-        end
-    end,
-    
-    ["help"] = function(args, user)
-        return [[**Available Commands:**
-```
-!start      - Begin auto farming (level → fruit/chest)
-!stop       - Stop all farming
-!inventory  - Show fruit inventory
-!give [fruit] [amount] [username] - Give fruit to player
-!status     - Show detailed status
-!roll       - Roll a fruit manually
-!chest      - Farm nearest chest manually
-!help       - Show this message
-```]]
-    end
-}
-
--- Discord Integration (WebSocket or Polling)
-local function connectDiscord()
-    if WebSocket and not CONFIG.DiscordBotToken:find("YOUR_") then
-        -- WebSocket Mode
-        local success, ws = pcall(function()
-            return WebSocket.connect("wss://gateway.discord.gg/?v=10&encoding=json")
-        end)
-        
-        if success and ws then
-            State.WebSocket = ws
-            
-            ws.OnMessage:Connect(function(msg)
-                local data = HttpService:JSONDecode(msg)
+        if not collecting and enabled and not disableOverride then
+            pcall(function()
+                local collected = false
                 
-                -- Heartbeat handling
-                if data.op == 10 then
-                    local interval = data.d.heartbeat_interval / 1000
-                    task.spawn(function()
-                        while ws.State == Enum.WebSocketState.Open do
-                            task.wait(interval * math.random(0.9, 1))
-                            ws:Send(HttpService:JSONEncode({op = 1, d = nil}))
+                -- Check for Tool-type fruits first
+                for _, v in ipairs(workspace:GetChildren()) do
+                    if v:IsA("Tool") and v.Name:find("fruit", 1, true) then
+
+                        collecting = true
+                        if CollectItem(v) then
+                            collected = true
                         end
-                    end)
-                    
-                    -- Identify
-                    ws:Send(HttpService:JSONEncode({
-                        op = 2,
-                        d = {
-                            token = CONFIG.DiscordBotToken,
-                            intents = 512,
-                            properties = {os = "linux", browser = "bf_bot", device = "bf_bot"}
-                        }
-                    }))
+                        collecting = false
+                        if collected then break end -- Break if collected successfully
+                    end
                 end
                 
-                -- Handle messages
-                if data.t == "MESSAGE_CREATE" and data.d then
-                    local msgData = data.d
-                    if msgData.content:sub(1, 1) == CONFIG.Prefix then
-                        local args = {}
-                        for arg in msgData.content:sub(2):gmatch("%S+") do
-                            table.insert(args, arg)
-                        end
-                        
-                        local cmd = table.remove(args, 1)
-                        if Commands[cmd] then
-                            local response = Commands[cmd](args, msgData.author.username)
-                            
-                            -- Reply
-                            pcall(function()
-                                http_request({
-                                    Url = "https://discord.com/api/v10/channels/" .. msgData.channel_id .. "/messages",
-                                    Method = "POST",
-                                    Headers = {
-                                        ["Content-Type"] = "application/json",
-                                        ["Authorization"] = "Bot " .. CONFIG.DiscordBotToken
-                                    },
-                                    Body = HttpService:JSONEncode({
-                                        content = response,
-                                        message_reference = {message_id = msgData.id}
-                                    })
-                                })
-                            end)
+                -- If not collected as a Tool, check for Model-type fruits
+                if not collected then
+                    for _, v in ipairs(workspace:GetChildren()) do
+                        if v:IsA("Model") and (v.Name:lower():find("fruit", 1, true)) then
+
+                            collecting = true
+                            if CollectItem(v) then
+                                collected = true
+                            end
+                            collecting = false
+                            if collected then break end -- Break if collected successfully
                         end
                     end
                 end
             end)
-            
-            ws.OnClose:Connect(function()
-                notify("Discord", "Disconnected! Reconnecting...")
-                task.wait(5)
-                connectDiscord()
-            end)
-            
-            notify("Discord", "Connected via WebSocket!")
-            return
         end
     end
-    
-    -- Polling Fallback
-    notify("Discord", "Using polling mode (2s delay)")
-    local lastMsgId = nil
-    
-    task.spawn(function()
-        while true do
-            if not CONFIG.DiscordBotToken:find("YOUR_") then
-                pcall(function()
-                    local url = "https://discord.com/api/v10/channels/" .. CONFIG.DiscordChannelId .. "/messages?limit=10"
-                    local res = http_request({
-                        Url = url,
-                        Method = "GET",
-                        Headers = {["Authorization"] = "Bot " .. CONFIG.DiscordBotToken}
-                    })
-                    
-                    local messages = HttpService:JSONDecode(res.Body)
-                    for i = #messages, 1, -1 do
-                        local msg = messages[i]
-                        if msg.content:sub(1, 1) == CONFIG.Prefix 
-                           and msg.author.id ~= "YOUR_BOT_ID" 
-                           and msg.id ~= lastMsgId then
-                            lastMsgId = msg.id
-                            
-                            local args = {}
-                            for arg in msg.content:sub(2):gmatch("%S+") do
-                                table.insert(args, arg)
-                            end
-                            
-                            local cmd = table.remove(args, 1)
-                            if Commands[cmd] then
-                                local response = Commands[cmd](args, msg.author.username)
-                                sendDiscord(response)
-                            end
-                        end
-                    end
-                end)
-            end
-            task.wait(2)
-        end
-    end)
 end
 
--- Character respawn handling
-Player.CharacterAdded:Connect(function(char)
-    Character = char
-    Humanoid = char:WaitForChild("Humanoid")
-    HRP = char:WaitForChild("HumanoidRootPart")
-end)
+local function StartChests()
+    while task.wait(0.1) do
+        if collecting or not enabled or disableOverride then 
+            task.wait(0.5)
+            continue 
+        end
+        
+        pcall(function()
+            local playerChar = Players.LocalPlayer.Character
+            if not playerChar or not playerChar.PrimaryPart then return end
+            
+            for _,v in pairs(workspace:GetDescendants()) do
+                if string.find(v.Name, "Chest") and v:IsA("BasePart") then -- Only tween to BaseParts, not TouchTransmitters
+                    print("Attempting to collect chest:", v.Parent.Name)
+                    -- Calculate a CFrame slightly above the chest
+                    local chestCFrame = CFrame.new(v.Position + Vector3.new(0, 3, 0))
+                    
+                    if tween(chestCFrame, speed) then
+                        task.wait(0.2) -- Stay at the chest for a moment to trigger collection
+                    end
+                end
+            end
+        end)
+    end
+end
 
--- Anti-AFK
-Player.Idled:Connect(function()
-    VirtualUser:Button2Down(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
-    task.wait(1)
-    VirtualUser:Button2Up(Vector2.new(0,0), Workspace.CurrentCamera.CFrame)
-end)
+local function Start()
+    local player = Players.LocalPlayer
+    
+    player.Idled:Connect(function()
+        VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+    end)    
+    task.spawn(StartChests)
+    task.spawn(StartFruits)
+end
 
--- Queue on teleport (reconnect)
-queue_on_teleport([[
-    -- Re-run script after teleport (optional)
-]])
-
--- Initialize
-task.spawn(connectDiscord)
-notify("BF Bot", "Loaded! Use !start in Discord to begin.")
-
--- Keep alive
-while true do task.wait(1) end
+-- Call the Start function to begin
+Start()
+listenToChat(chatCallback)
